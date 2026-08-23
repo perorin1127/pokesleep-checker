@@ -217,10 +217,8 @@ function renderRecipeCard(evaluated, mode) {
 
 // ---- 個数バッジの検出（OCR） ----
 // ポケスリの食材画面は「アイコン＋個数バッジ」が上段、「食材名（黒い読みやすい文字）」が
-// 下段に並ぶグリッドレイアウト（4列）。食材の判定はまず食材名のテキストOCRを試み、
-// うまく読めなかった場合だけアイコン画像の色を公式アイコンと照合するフォールバックを使う
-// （一番上の段はアイコンがヘッダー直下で小さく表示されるスクロール位置があり、
-// アイコン照合だけでは判定できないことがあるが、食材名の文字は同じ大きさで読めるため）。
+// 下段に並ぶグリッドレイアウト（4列）。食材の判定は食材名のテキストOCRのみで行う
+// （ゲーム内アイコン画像を同梱・照合する方式は著作権上の懸念があるため使用しない）。
 
 const NUMBER_TOKEN_RE = /[×xX](\d{1,3})/;
 
@@ -270,63 +268,6 @@ function groupBadgesIntoRows(numberWords) {
   return rows;
 }
 
-// ---- アイコン画像照合 ----
-// 参照アイコン（icons/*.png）と、スクショから切り出したアイコン領域の「色ヒストグラム」を
-// 比較して判定する。グリッド単位で位置ごとに色を比較する方式だと、アイコンの陰影の付き方
-// （中心が明るく縁が暗い、という共通の描画スタイル）が支配的になってしまい、
-// 全く違う食材同士でも似ていると誤判定しやすい。ヒストグラム（色の出現比率だけを見る）は
-// 位置のズレや多少のトリミング誤差に強く、実データでの検証でも安定して正しく判定できた。
-const HIST_BINS = 8; // RGB各チャンネルの分割数
-let iconHistograms = null; // { ingredientName: Float32Array(BINS^3) }
-
-function colorHistogram(source, sx, sy, sw, sh, alphaAware) {
-  const w = Math.max(1, Math.round(sw));
-  const h = Math.max(1, Math.round(sh));
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
-  const { data } = ctx.getImageData(0, 0, w, h);
-
-  const hist = new Float32Array(HIST_BINS * HIST_BINS * HIST_BINS);
-  let total = 0;
-  for (let i = 0; i < w * h; i++) {
-    if (alphaAware && data[i * 4 + 3] < 128) continue;
-    const rb = Math.min(HIST_BINS - 1, Math.floor((data[i * 4] / 256) * HIST_BINS));
-    const gb = Math.min(HIST_BINS - 1, Math.floor((data[i * 4 + 1] / 256) * HIST_BINS));
-    const bb = Math.min(HIST_BINS - 1, Math.floor((data[i * 4 + 2] / 256) * HIST_BINS));
-    hist[rb * HIST_BINS * HIST_BINS + gb * HIST_BINS + bb]++;
-    total++;
-  }
-  if (total > 0) for (let i = 0; i < hist.length; i++) hist[i] /= total;
-  return hist;
-}
-
-// 画像のアルファ不透明な範囲（実際にアイコンが描かれている範囲）を求める
-function findOpaqueBBox(img) {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
-  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const alpha = data[(y * canvas.width + x) * 4 + 3];
-      if (alpha > 20) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < minX || maxY < minY) return { x: 0, y: 0, w: canvas.width, h: canvas.height, canvas };
-  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, canvas };
-}
-
 async function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -334,103 +275,6 @@ async function loadImage(src) {
     img.onerror = reject;
     img.src = src;
   });
-}
-
-async function ensureIconHistograms() {
-  if (iconHistograms) return iconHistograms;
-  iconHistograms = {};
-  await Promise.all(
-    INGREDIENTS.map(async ing => {
-      try {
-        const img = await loadImage(`icons/${ing.id}.png`);
-        const bbox = findOpaqueBBox(img);
-        // 参照アイコンは透明部分を除外して、絵柄部分の色だけを集計する
-        iconHistograms[ing.name] = colorHistogram(bbox.canvas, bbox.x, bbox.y, bbox.w, bbox.h, true);
-      } catch (err) {
-        console.error("icon load failed", ing.id, err);
-      }
-    })
-  );
-  return iconHistograms;
-}
-
-// ヒストグラム交差（各ビンの小さい方の値を足し合わせる）。1に近いほど似ている。
-function histogramIntersection(a, b) {
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) sum += Math.min(a[i], b[i]);
-  return sum;
-}
-
-function matchIconHistogram(hist) {
-  let bestName = null;
-  let bestSim = -Infinity;
-  let secondSim = -Infinity;
-  Object.entries(iconHistograms).forEach(([name, refHist]) => {
-    const sim = histogramIntersection(hist, refHist);
-    if (sim > bestSim) {
-      secondSim = bestSim;
-      bestSim = sim;
-      bestName = name;
-    } else if (sim > secondSim) {
-      secondSim = sim;
-    }
-  });
-  return { name: bestName, sim: bestSim, secondSim };
-}
-
-// ある座標が「ほぼ純白（アイコンの丸い背景でも絵柄でもない余白）」かどうか
-function isWhitePixel(data, idx) {
-  return data[idx] > 248 && data[idx + 1] > 248 && data[idx + 2] > 248;
-}
-
-// バッジ直上を1ピクセル列だけ走査し、クリーム色の丸背景が始まる位置（＝アイコンの上端）を探す。
-// 1行分のスクリーンショットしか無い場合（一番上の段がヘッダー直下に来る場合など）は
-// アイコンの上に十分な余白が無く、固定比率だけで切り出すとヘッダーやタブを巻き込んでしまうため、
-// 実際の背景色を見て動的に上端を決める。
-function findIconTop(imgCanvas, ctx, iconCenterX, badgeY1, colWidth) {
-  const maxReach = colWidth * 1.0; // これ以上は探さない上限
-  const scanTop = Math.max(0, Math.round(badgeY1 - maxReach));
-  const scanBottom = Math.round(badgeY1);
-  const x = Math.max(0, Math.min(imgCanvas.width - 1, Math.round(iconCenterX)));
-  const height = scanBottom - scanTop;
-  if (height <= 0) return badgeY1 - colWidth * 0.917;
-
-  const { data } = ctx.getImageData(x, scanTop, 1, height);
-  const WHITE_RUN_NEEDED = 6;
-  let whiteRun = 0;
-  // 下（バッジ寄り）から上へ走査し、純白が連続する区間に入ったらそこがアイコンの上端
-  for (let y = height - 1; y >= 0; y--) {
-    if (isWhitePixel(data, y * 4)) {
-      whiteRun++;
-      if (whiteRun >= WHITE_RUN_NEEDED) {
-        return scanTop + y + whiteRun;
-      }
-    } else {
-      whiteRun = 0;
-    }
-  }
-  return scanTop; // 白い区切りが見つからなければ上限まで使う
-}
-
-// バッジの位置から、その直上にあるアイコンのおおよその領域を切り出す。
-// icon top はあらかじめ決めた y0（本来は自動走査 findIconTop の結果だが、
-// 一番上の段のようにヘッダーに近すぎて走査が信用できない場合は、同じ画像内の
-// 他の行から学習した比率で上書きされたものが渡ってくる）を使う。
-function cropIconRegion(imgCanvas, badge, colWidth, y0, y1) {
-  const cx = (badge.bbox.x0 + badge.bbox.x1) / 2;
-  const x0 = cx - colWidth * 0.634;
-  const x1 = cx + colWidth * 0.161;
-  // 円形アイコンの中心付近（クリーム色の背景を避けた内側）だけを使う
-  const insetX = (x1 - x0) * 0.22;
-  const insetY = Math.max(0, (y1 - y0) * 0.18);
-  return colorHistogram(
-    imgCanvas,
-    Math.max(0, x0 + insetX),
-    Math.max(0, y0 + insetY),
-    (x1 - x0) - insetX * 2,
-    Math.max(1, (y1 - y0) - insetY * 2),
-    false
-  );
 }
 
 function median(nums) {
@@ -492,76 +336,19 @@ function matchByNameText(numberWords, numberRows, words) {
   return result;
 }
 
-// ---- アイコン画像照合での判定（食材名が読めなかった場合のフォールバック） ----
-function matchByIcon(canvas, ctx, numberRows) {
-  const result = new Map(); // badge -> { name, sim }
-
-  const items = [];
-  const reliableRatios = [];
-  numberRows.forEach(row => {
-    const sorted = [...row.items].sort((a, b) => a.bbox.x0 - b.bbox.x0);
-    let colWidth;
-    if (sorted.length > 1) {
-      const gaps = [];
-      for (let i = 1; i < sorted.length; i++) {
-        gaps.push(
-          (sorted[i].bbox.x0 + sorted[i].bbox.x1) / 2 -
-            (sorted[i - 1].bbox.x0 + sorted[i - 1].bbox.x1) / 2
-        );
-      }
-      colWidth = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    } else {
-      colWidth = canvas.width / 4;
-    }
-
-    sorted.forEach(badge => {
-      const cx = (badge.bbox.x0 + badge.bbox.x1) / 2;
-      const iconCenterX = cx - colWidth * 0.237;
-      const y1 = badge.bbox.y1 - colWidth * 0.083;
-      const y0raw = findIconTop(canvas, ctx, iconCenterX, y1, colWidth);
-      const ratio = (y1 - y0raw) / colWidth;
-      const reliable = ratio >= 0.65 && ratio <= 1.05;
-      const likelyOccluded = ratio < 0.3;
-      if (reliable) reliableRatios.push(ratio);
-      items.push({ badge, colWidth, y1, y0raw, reliable, likelyOccluded });
-    });
-  });
-
-  const fallbackRatio = reliableRatios.length > 0 ? median(reliableRatios) : 0.917;
-
-  items.forEach(({ badge, colWidth, y1, y0raw, reliable, likelyOccluded }) => {
-    if (likelyOccluded) return;
-    const y0 = reliable ? y0raw : y1 - fallbackRatio * colWidth;
-    if (y1 - y0 < colWidth * 0.45) return;
-
-    const hist = cropIconRegion(canvas, badge, colWidth, y0, y1);
-    const { name, sim, secondSim } = matchIconHistogram(hist);
-    if (!name) return;
-    if (sim - secondSim < 0.03) return;
-    result.set(badge, { name, sim });
-  });
-
-  return result;
-}
-
-async function matchIngredientsByIcon(canvas, ctx, numberSourceWords, textSourceWords) {
+async function matchIngredientsFromText(numberSourceWords, textSourceWords) {
   const detected = {};
   const numberWords = extractNumberBadges(numberSourceWords);
   if (numberWords.length === 0) return detected;
 
-  await ensureIconHistograms();
   const numberRows = groupBadgesIntoRows(numberWords);
-
   const textResults = matchByNameText(numberWords, numberRows, textSourceWords);
-  const iconResults = matchByIcon(canvas, ctx, numberRows);
 
   numberWords.forEach(badge => {
-    // 食材名のテキストがはっきり読めた場合はそちらを優先し、
-    // 読めなかった場合だけアイコンの色照合結果を使う
-    const picked = textResults.get(badge) || iconResults.get(badge);
+    const picked = textResults.get(badge);
     if (!picked) return;
-    if (!detected[picked.name] || (detected[picked.name].score || 0) < (picked.score || picked.sim)) {
-      detected[picked.name] = { qty: badge.qty, score: picked.score || picked.sim };
+    if (!detected[picked.name] || detected[picked.name].score < picked.score) {
+      detected[picked.name] = { qty: badge.qty, score: picked.score };
     }
   });
 
@@ -569,7 +356,7 @@ async function matchIngredientsByIcon(canvas, ctx, numberSourceWords, textSource
 }
 
 // 小さい数字（特に "1" が連続する3桁の数値）はOCRが読み違えやすいため、
-// 画像全体を拡大してから読み取る（アイコン照合もこの拡大画像を使い回す）。
+// 画像全体を拡大してから読み取る。
 const OCR_UPSCALE = 2;
 
 // 一番上の段は、一覧の切り替わり演出などでバッジの文字が非常に薄く表示され、
@@ -755,12 +542,7 @@ async function processFile(file, imageLabel) {
     numberWords.push({ text: `x${r.qty}`, bbox: r.bbox, confidence: 100 });
   });
 
-  const detected = await matchIngredientsByIcon(
-    canvas,
-    ctx,
-    numberWords,
-    textPass.data.words || []
-  );
+  const detected = await matchIngredientsFromText(numberWords, textPass.data.words || []);
   Object.entries(detected).forEach(([name, info]) => {
     detectedSources[name].push({ qty: info.qty, imageLabel });
   });
