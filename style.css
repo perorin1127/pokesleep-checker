@@ -240,16 +240,26 @@ section {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
 }
 
 .recipe-head .rname {
   font-weight: bold;
+  margin-right: auto;
+}
+
+.recipe-head .renergy {
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: var(--accent-dark);
+  white-space: nowrap;
 }
 
 .recipe-head .rcat {
   font-size: 0.75rem;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .recipe-ings {

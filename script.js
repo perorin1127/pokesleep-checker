@@ -166,7 +166,7 @@ function renderResults() {
   }
 
   makeable
-    .sort((a, b) => a.recipe.category.localeCompare(b.recipe.category, "ja"))
+    .sort((a, b) => a.recipe.category.localeCompare(b.recipe.category, "ja") || b.recipe.energy - a.recipe.energy)
     .forEach(e => resultList.appendChild(renderRecipeCard(e, "ok")));
 
   if (showAlmost.checked) {
@@ -184,10 +184,14 @@ function renderRecipeCard(evaluated, mode) {
   const rname = document.createElement("span");
   rname.className = "rname";
   rname.textContent = (mode === "ok" ? "✅ " : "🔶 ") + recipe.name;
+  const renergy = document.createElement("span");
+  renergy.className = "renergy";
+  renergy.textContent = `⚡${recipe.energy.toLocaleString()}`;
   const rcat = document.createElement("span");
   rcat.className = "rcat";
   rcat.textContent = recipe.category;
   head.appendChild(rname);
+  head.appendChild(renergy);
   head.appendChild(rcat);
 
   const ings = document.createElement("div");
