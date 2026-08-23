@@ -564,6 +564,130 @@ async function matchIngredientsByIcon(canvas, ctx, numberSourceWords, textSource
 // 画像全体を拡大してから読み取る（アイコン照合もこの拡大画像を使い回す）。
 const OCR_UPSCALE = 2;
 
+// 一番上の段は、一覧の切り替わり演出などでバッジの文字が非常に薄く表示され、
+// 通常のOCRでは数字が1つも読めないことがある（食材名のテキストは薄くならず読めるため、
+// この段の存在自体は分かる）。その場合はその段の位置を他の段の間隔から推定し、
+// 範囲を絞ってその場だけ明暗を最大限に引き伸ばす自動コントラスト補正をかけ直して
+// 再度数字だけをOCRする。
+// 指定した矩形だけで明るさの最小・最大を求め、0〜255いっぱいに引き伸ばしてから
+// 指定倍率で拡大したキャンバスを返す。
+function autocontrastCrop(canvas, sx, sy, sw, sh, scale) {
+  const crop = document.createElement("canvas");
+  crop.width = sw;
+  crop.height = sh;
+  const cctx = crop.getContext("2d", { willReadFrequently: true });
+  cctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const imgData = cctx.getImageData(0, 0, sw, sh);
+  const d = imgData.data;
+  let min = 255, max = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const range = Math.max(1, max - min);
+  for (let i = 0; i < d.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      d[i + c] = Math.min(255, Math.max(0, ((d[i + c] - min) / range) * 255));
+    }
+  }
+  cctx.putImageData(imgData, 0, 0);
+
+  const big = document.createElement("canvas");
+  big.width = sw * scale;
+  big.height = sh * scale;
+  const bctx = big.getContext("2d");
+  bctx.imageSmoothingEnabled = true;
+  bctx.drawImage(crop, 0, 0, big.width, big.height);
+  return big;
+}
+
+// x中心が近いバッジどうしを同じ列としてまとめる。バッジの右端（x1）は桁数が
+// 変わってもほぼ一定の位置にそろうため列の基準に使い、切り出し幅は既知の
+// バッジの中で最も幅広いもの（＝3桁）を基準に余裕を持たせる
+// （読み取る数値の桁数は事前に分からないため、狭すぎる幅で切り出すと
+// 桁が欠けて誤読の原因になる）。
+function clusterColumns(badges, tolerance) {
+  const sorted = [...badges].sort((a, b) => (a.bbox.x0 + a.bbox.x1) / 2 - (b.bbox.x0 + b.bbox.x1) / 2);
+  const columns = [];
+  sorted.forEach(b => {
+    const cx = (b.bbox.x0 + b.bbox.x1) / 2;
+    const last = columns[columns.length - 1];
+    if (last && cx - last.cx < tolerance) {
+      last.items.push(b);
+      last.cx = (last.cx * (last.items.length - 1) + cx) / last.items.length;
+    } else {
+      columns.push({ cx, items: [b] });
+    }
+  });
+  const maxWidth = Math.max(...badges.map(b => b.bbox.x1 - b.bbox.x0));
+  return columns.map(col => {
+    const x1 = median(col.items.map(b => b.bbox.x1));
+    return { x0: x1 - maxWidth * 1.3, x1 };
+  });
+}
+
+async function recoverFaintTopRow(canvas, numberWords) {
+  if (numberWords.length === 0) return [];
+  const rows = groupBadgesIntoRows(numberWords);
+  if (rows.length < 2) return [];
+
+  // 段の間隔（＝バッジ同士の縦の間隔）は一定なので、一番上に検出できている段の
+  // バッジ位置から、その間隔ぶんだけ上に「もう1段分のバッジ」があるはずの位置を予測する。
+  const spacings = [];
+  for (let i = 1; i < rows.length; i++) spacings.push(rows[i].y0 - rows[i - 1].y0);
+  const spacing = median(spacings);
+  if (!spacing || spacing <= 0) return [];
+
+  const topRow = rows[0];
+  const badgeHeight = median(topRow.items.map(b => b.bbox.y1 - b.bbox.y0));
+  const predictedBadgeY0 = topRow.y0 - spacing;
+  const margin = badgeHeight * 1.1;
+  const predictedY0 = Math.round(predictedBadgeY0 - margin);
+  const predictedY1 = Math.round(predictedBadgeY0 + badgeHeight + margin);
+  if (predictedY0 < 0 || predictedY1 - predictedY0 < 10) return [];
+
+  // 列（同じ横位置）ごとに1つずつ切り出して個別にOCRする。行全体をまとめて
+  // 読み取ると、他の列の数字と混ざって誤読しやすいため。
+  const columns = clusterColumns(
+    rows.flatMap(r => r.items),
+    spacing * 0.3
+  );
+
+  const results = [];
+  for (const col of columns) {
+    // 列どうしの間には十分な余白があるため、多少広めに切り出しても隣の列と
+    // 混ざる心配は少ない。右端がぎりぎりで桁を欠くよりも安全側に寄せる。
+    const padLeft = (col.x1 - col.x0) * 0.2;
+    const padRight = (col.x1 - col.x0) * 0.35;
+    const sx = Math.max(0, Math.round(col.x0 - padLeft));
+    const sw = Math.min(canvas.width - sx, Math.round(col.x1 - col.x0 + padLeft + padRight));
+    const sh = predictedY1 - predictedY0;
+    if (sw <= 0 || sh <= 0) continue;
+
+    // 大きく拡大しすぎるとぼやけて数字が別の数字に見えてしまうことがあるため
+    // （例:「6」が「0」に、「3」が「5」に見えてしまう）、あえて縮小気味にする
+    const big = autocontrastCrop(canvas, sx, predictedY0, sw, sh, 0.5);
+    const { data } = await Tesseract.recognize(big, "eng", {
+      tessedit_char_whitelist: "0123456789xX×",
+    });
+    const found = extractNumberBadges(data.words || []);
+    if (found.length === 0) continue;
+    // 列を1つに絞って切り出しているので基本は1件のはずだが、複数見つかった場合は
+    // 桁数が多い（＝より具体的に読めた）ものを優先する
+    const best = found.reduce((a, b) =>
+      String(b.qty).length > String(a.qty).length ? b : a
+    );
+    results.push({
+      qty: best.qty,
+      bbox: { x0: col.x0, x1: col.x1, y0: predictedY0, y1: predictedY1 },
+    });
+  }
+
+  return results;
+}
+
 async function processFile(file, imageLabel) {
   const url = URL.createObjectURL(file);
   const thumb = document.createElement("img");
@@ -617,10 +741,16 @@ async function processFile(file, imageLabel) {
     },
   });
 
+  const numberWords = numberPass.data.words || [];
+  const recovered = await recoverFaintTopRow(canvas, extractNumberBadges(numberWords));
+  recovered.forEach(r => {
+    numberWords.push({ text: `x${r.qty}`, bbox: r.bbox, confidence: 100 });
+  });
+
   const detected = await matchIngredientsByIcon(
     canvas,
     ctx,
-    numberPass.data.words || [],
+    numberWords,
     textPass.data.words || []
   );
   Object.entries(detected).forEach(([name, info]) => {
