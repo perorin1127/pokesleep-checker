@@ -22,16 +22,12 @@ INGREDIENTS.forEach(ing => (counts[ing.name] = 0));
 // 競合中の食材名 -> Set(数値)
 let conflicts = {};
 
-// ユーザーが手入力で上書きした食材名 -> 数値（自動読み取りより優先される）
-const manualOverrides = {};
-
 let imageCounter = 0;
 
 showAlmost.addEventListener("change", renderResults);
 
 resetBtn.addEventListener("click", () => {
   INGREDIENTS.forEach(ing => (detectedSources[ing.name] = []));
-  Object.keys(manualOverrides).forEach(k => delete manualOverrides[k]);
   imageCounter = 0;
   previewList.innerHTML = "";
   resetBtn.hidden = true;
@@ -53,18 +49,9 @@ function buildDetectedList() {
     name.className = "name";
     name.textContent = ing.name;
 
-    const count = document.createElement("input");
-    count.type = "number";
-    count.min = "0";
+    const count = document.createElement("div");
     count.className = "count";
-    count.value = counts[ing.name];
-    count.addEventListener("change", () => {
-      const v = parseInt(count.value, 10);
-      manualOverrides[ing.name] = isNaN(v) || v < 0 ? 0 : v;
-      recomputeCounts();
-      refreshDetectedList();
-      renderResults();
-    });
+    count.textContent = counts[ing.name];
 
     card.appendChild(name);
     card.appendChild(count);
@@ -78,27 +65,17 @@ function refreshDetectedList() {
     const card = detectedList.querySelector(`.detected-card[data-name="${CSS.escape(ing.name)}"]`);
     if (!card) return;
     const isConflict = !!conflicts[ing.name];
-    const isManual = Object.prototype.hasOwnProperty.call(manualOverrides, ing.name);
     const c = counts[ing.name] || 0;
-    const input = card.querySelector(".count");
-    if (document.activeElement !== input) {
-      input.value = isConflict ? "" : c;
-    }
-    input.placeholder = isConflict ? "?" : "";
-    card.classList.toggle("found", !isConflict && c > 0 && !isManual);
+    card.querySelector(".count").textContent = isConflict ? "?" : c;
+    card.classList.toggle("found", !isConflict && c > 0);
     card.classList.toggle("conflict", isConflict);
-    card.classList.toggle("manual", isManual);
   });
 }
 
-// detectedSources から counts / conflicts を再計算する（手入力があればそちらを優先）
+// detectedSources から counts / conflicts を再計算する
 function recomputeCounts() {
   conflicts = {};
   INGREDIENTS.forEach(ing => {
-    if (Object.prototype.hasOwnProperty.call(manualOverrides, ing.name)) {
-      counts[ing.name] = manualOverrides[ing.name];
-      return;
-    }
     const sources = detectedSources[ing.name];
     if (!sources || sources.length === 0) {
       counts[ing.name] = 0;
@@ -231,13 +208,34 @@ function renderRecipeCard(evaluated, mode) {
 }
 
 // ---- 個数バッジの検出（OCR） ----
-// ポケスリの食材画面は「アイコン＋個数バッジ」が上段、「食材名」が下段に並ぶグリッドレイアウト（4列）。
-// 個数バッジ（例:「x37」）はOCRで非常に高精度に読み取れるが、食材名のテキストは装飾フォントのため
-// OCRでほぼ読み取れないことが多い。そこで食材の判定には文字OCRではなく、
-// バッジの真上にあるアイコン画像そのものを切り出し、公式アイコン画像と見た目を比較する
-// 「アイコン画像照合」方式を使う。
+// ポケスリの食材画面は「アイコン＋個数バッジ」が上段、「食材名（黒い読みやすい文字）」が
+// 下段に並ぶグリッドレイアウト（4列）。食材の判定はまず食材名のテキストOCRを試み、
+// うまく読めなかった場合だけアイコン画像の色を公式アイコンと照合するフォールバックを使う
+// （一番上の段はアイコンがヘッダー直下で小さく表示されるスクロール位置があり、
+// アイコン照合だけでは判定できないことがあるが、食材名の文字は同じ大きさで読めるため）。
 
 const NUMBER_TOKEN_RE = /[×xX](\d{1,3})/;
+
+function hasJapanese(s) {
+  return /[぀-ゟ゠-ヿ一-鿿]/.test(s || "");
+}
+
+// 2つの文字列の文字一致度（多重集合の共通部分 / name の長さ）。単語の並び順が
+// フォントの癖で崩れても許容できるよう、順序ではなく文字の集合で比較する。
+function charOverlapScore(name, text) {
+  const nameChars = Array.from(name);
+  const textChars = Array.from(text);
+  const textCount = {};
+  textChars.forEach(c => (textCount[c] = (textCount[c] || 0) + 1));
+  let matched = 0;
+  nameChars.forEach(c => {
+    if (textCount[c] > 0) {
+      matched++;
+      textCount[c]--;
+    }
+  });
+  return matched / nameChars.length;
+}
 
 function extractNumberBadges(words) {
   const numberWords = [];
@@ -406,20 +404,14 @@ function findIconTop(imgCanvas, ctx, iconCenterX, badgeY1, colWidth) {
   return scanTop; // 白い区切りが見つからなければ上限まで使う
 }
 
-// バッジの位置から、その直上にあるアイコンのおおよその領域を推定して切り出す。
-// 列幅（同じ段のバッジ間隔）を基準にした相対値で計算するため、画像の解像度が変わっても対応できる。
-function cropIconForBadge(imgCanvas, ctx, badge, colWidth) {
+// バッジの位置から、その直上にあるアイコンのおおよその領域を切り出す。
+// icon top はあらかじめ決めた y0（本来は自動走査 findIconTop の結果だが、
+// 一番上の段のようにヘッダーに近すぎて走査が信用できない場合は、同じ画像内の
+// 他の行から学習した比率で上書きされたものが渡ってくる）を使う。
+function cropIconRegion(imgCanvas, badge, colWidth, y0, y1) {
   const cx = (badge.bbox.x0 + badge.bbox.x1) / 2;
-  const iconCenterX = cx - colWidth * 0.237;
   const x0 = cx - colWidth * 0.634;
   const x1 = cx + colWidth * 0.161;
-  const y1 = badge.bbox.y1 - colWidth * 0.083;
-  const y0 = findIconTop(imgCanvas, ctx, iconCenterX, y1, colWidth);
-
-  // 上に十分な余白（＝アイコン全体）が無い場合（一番上の段がヘッダー直下に来る場合など）は
-  // ヘッダーやタブを巻き込んだ不完全な切り出しになるため、無理に判定せず諦める
-  if (y1 - y0 < colWidth * 0.45) return null;
-
   // 円形アイコンの中心付近（クリーム色の背景を避けた内側）だけを使う
   const insetX = (x1 - x0) * 0.22;
   const insetY = Math.max(0, (y1 - y0) * 0.18);
@@ -433,23 +425,72 @@ function cropIconForBadge(imgCanvas, ctx, badge, colWidth) {
   );
 }
 
-async function matchIngredientsByIcon(file, words) {
-  const detected = {};
-  const numberWords = extractNumberBadges(words);
-  if (numberWords.length === 0) return detected;
+function median(nums) {
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
-  await ensureIconHistograms();
+// ---- 食材名テキストでの判定（主方式） ----
+// 各バッジの真下にある食材名テキスト（黒い読みやすい文字）を、同じ段の中で一番近い
+// 列に割り当てて連結し、既知の食材名と文字一致度で照合する。
+// 一番近い列と僅差の場合は誤対応付けを避けるため割り当てない。
+function matchByNameText(numberWords, numberRows, words) {
+  const result = new Map(); // badge -> { name, score }
+  const minY = Math.min(...numberWords.map(w => w.bbox.y0)) - 50;
+  const nameWords = (words || []).filter(
+    w => w.bbox && hasJapanese(w.text) && !NUMBER_TOKEN_RE.test(w.text) && w.bbox.y0 >= minY
+  );
 
-  const img = await loadImage(URL.createObjectURL(file));
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
+  const groups = new Map(); // badge -> parts[]
+  numberWords.forEach(nw => groups.set(nw, []));
 
-  const rows = groupBadgesIntoRows(numberWords);
+  nameWords.forEach(word => {
+    let block = null;
+    numberRows.forEach(row => {
+      if (row.y1 <= word.bbox.y0 + 20 && (!block || row.y1 > block.y1)) block = row;
+    });
+    if (!block) return;
 
-  rows.forEach(row => {
+    const wCenter = (word.bbox.x0 + word.bbox.x1) / 2;
+    const distances = block.items
+      .map(nw => ({ nw, dist: Math.abs((nw.bbox.x0 + nw.bbox.x1) / 2 - wCenter) }))
+      .sort((a, b) => a.dist - b.dist);
+    if (distances.length === 0) return;
+    if (distances.length > 1 && distances[1].dist - distances[0].dist < 20) return;
+    groups.get(distances[0].nw).push(word);
+  });
+
+  groups.forEach((parts, badge) => {
+    if (parts.length === 0) return;
+    const text = parts
+      .sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0)
+      .map(p => p.text)
+      .join("");
+    let bestIng = null;
+    let bestScore = 0;
+    INGREDIENTS.forEach(ing => {
+      const score = charOverlapScore(ing.name, text);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIng = ing;
+      }
+    });
+    if (bestIng && bestScore >= 0.55) {
+      result.set(badge, { name: bestIng.name, score: bestScore });
+    }
+  });
+
+  return result;
+}
+
+// ---- アイコン画像照合での判定（食材名が読めなかった場合のフォールバック） ----
+function matchByIcon(canvas, ctx, numberRows) {
+  const result = new Map(); // badge -> { name, sim }
+
+  const items = [];
+  const reliableRatios = [];
+  numberRows.forEach(row => {
     const sorted = [...row.items].sort((a, b) => a.bbox.x0 - b.bbox.x0);
     let colWidth;
     if (sorted.length > 1) {
@@ -466,20 +507,62 @@ async function matchIngredientsByIcon(file, words) {
     }
 
     sorted.forEach(badge => {
-      const hist = cropIconForBadge(canvas, ctx, badge, colWidth);
-      if (!hist) return;
-      const { name, sim, secondSim } = matchIconHistogram(hist);
-      if (!name) return;
-      // 明確に一番近い候補が無い（僅差）場合は誤判定を避けるため採用しない
-      if (sim - secondSim < 0.03) return;
-      if (!detected[name] || detected[name].sim < sim) {
-        detected[name] = { qty: badge.qty, sim };
-      }
+      const cx = (badge.bbox.x0 + badge.bbox.x1) / 2;
+      const iconCenterX = cx - colWidth * 0.237;
+      const y1 = badge.bbox.y1 - colWidth * 0.083;
+      const y0raw = findIconTop(canvas, ctx, iconCenterX, y1, colWidth);
+      const ratio = (y1 - y0raw) / colWidth;
+      const reliable = ratio >= 0.65 && ratio <= 1.05;
+      const likelyOccluded = ratio < 0.3;
+      if (reliable) reliableRatios.push(ratio);
+      items.push({ badge, colWidth, y1, y0raw, reliable, likelyOccluded });
     });
+  });
+
+  const fallbackRatio = reliableRatios.length > 0 ? median(reliableRatios) : 0.917;
+
+  items.forEach(({ badge, colWidth, y1, y0raw, reliable, likelyOccluded }) => {
+    if (likelyOccluded) return;
+    const y0 = reliable ? y0raw : y1 - fallbackRatio * colWidth;
+    if (y1 - y0 < colWidth * 0.45) return;
+
+    const hist = cropIconRegion(canvas, badge, colWidth, y0, y1);
+    const { name, sim, secondSim } = matchIconHistogram(hist);
+    if (!name) return;
+    if (sim - secondSim < 0.03) return;
+    result.set(badge, { name, sim });
+  });
+
+  return result;
+}
+
+async function matchIngredientsByIcon(canvas, ctx, numberSourceWords, textSourceWords) {
+  const detected = {};
+  const numberWords = extractNumberBadges(numberSourceWords);
+  if (numberWords.length === 0) return detected;
+
+  await ensureIconHistograms();
+  const numberRows = groupBadgesIntoRows(numberWords);
+
+  const textResults = matchByNameText(numberWords, numberRows, textSourceWords);
+  const iconResults = matchByIcon(canvas, ctx, numberRows);
+
+  numberWords.forEach(badge => {
+    // 食材名のテキストがはっきり読めた場合はそちらを優先し、
+    // 読めなかった場合だけアイコンの色照合結果を使う
+    const picked = textResults.get(badge) || iconResults.get(badge);
+    if (!picked) return;
+    if (!detected[picked.name] || (detected[picked.name].score || 0) < (picked.score || picked.sim)) {
+      detected[picked.name] = { qty: badge.qty, score: picked.score || picked.sim };
+    }
   });
 
   return detected;
 }
+
+// 小さい数字（特に "1" が連続する3桁の数値）はOCRが読み違えやすいため、
+// 画像全体を拡大してから読み取る（アイコン照合もこの拡大画像を使い回す）。
+const OCR_UPSCALE = 2;
 
 async function processFile(file, imageLabel) {
   const url = URL.createObjectURL(file);
@@ -488,16 +571,58 @@ async function processFile(file, imageLabel) {
   thumb.title = imageLabel;
   previewList.appendChild(thumb);
 
-  const { data } = await Tesseract.recognize(file, "eng", {
+  const img = await loadImage(url);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth * OCR_UPSCALE;
+  canvas.height = img.naturalHeight * OCR_UPSCALE;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // 個数バッジの数字と食材名の日本語は別々にOCRする。jpn+eng の混合モードだと
+  // 言語モデルが競合して小さな数字の認識精度が明確に落ちるため、数字は
+  // 数字専用（英語＋文字制限）、食材名は日本語混在でそれぞれ最適な設定を使う。
+  // 数字側はさらにコントラストを強めたコピーを使う。一覧の一番上の段は
+  // フェード演出などでバッジの文字が薄く表示されていることがあり、
+  // 少しコントラストを上げるだけで読み取れる数字が増えるため。
+  const numberCanvas = document.createElement("canvas");
+  numberCanvas.width = canvas.width;
+  numberCanvas.height = canvas.height;
+  const numberCtx = numberCanvas.getContext("2d", { willReadFrequently: true });
+  numberCtx.drawImage(canvas, 0, 0);
+  {
+    const imgData = numberCtx.getImageData(0, 0, numberCanvas.width, numberCanvas.height);
+    const d = imgData.data;
+    const factor = 1.8;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.min(255, Math.max(0, (d[i] - 128) * factor + 128));
+      d[i + 1] = Math.min(255, Math.max(0, (d[i + 1] - 128) * factor + 128));
+      d[i + 2] = Math.min(255, Math.max(0, (d[i + 2] - 128) * factor + 128));
+    }
+    numberCtx.putImageData(imgData, 0, 0);
+  }
+
+  const progress = (label, ratio, base) => {
+    ocrStatus.textContent = `${imageLabel} を読み取り中... ${Math.round((base + ratio * 0.5) * 100)}%`;
+  };
+  const numberPass = await Tesseract.recognize(numberCanvas, "eng", {
     tessedit_char_whitelist: "0123456789xX×",
     logger: m => {
-      if (m.status === "recognizing text") {
-        ocrStatus.textContent = `${imageLabel} を読み取り中... ${Math.round(m.progress * 100)}%`;
-      }
+      if (m.status === "recognizing text") progress(imageLabel, m.progress, 0);
+    },
+  });
+  const textPass = await Tesseract.recognize(canvas, "jpn+eng", {
+    logger: m => {
+      if (m.status === "recognizing text") progress(imageLabel, m.progress, 0.5);
     },
   });
 
-  const detected = await matchIngredientsByIcon(file, data.words || []);
+  const detected = await matchIngredientsByIcon(
+    canvas,
+    ctx,
+    numberPass.data.words || [],
+    textPass.data.words || []
+  );
   Object.entries(detected).forEach(([name, info]) => {
     detectedSources[name].push({ qty: info.qty, imageLabel });
   });
