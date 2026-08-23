@@ -187,11 +187,15 @@ function renderRecipeCard(evaluated, mode) {
   const renergy = document.createElement("span");
   renergy.className = "renergy";
   renergy.textContent = `⚡${recipe.energy.toLocaleString()}`;
+  const rmult = document.createElement("span");
+  rmult.className = "rmult";
+  rmult.textContent = `×${recipe.multiplier.toFixed(2)}`;
   const rcat = document.createElement("span");
   rcat.className = "rcat";
   rcat.textContent = recipe.category;
   head.appendChild(rname);
   head.appendChild(renergy);
+  head.appendChild(rmult);
   head.appendChild(rcat);
 
   const ings = document.createElement("div");
