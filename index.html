@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ポケスリ 料理チェッカー</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🍳 ポケスリ 料理チェッカー</h1>
+  <p class="sub">食材画面のスクショから、今つくれる料理をチェック</p>
+</header>
+
+<main>
+  <section class="upload-section">
+    <label for="fileInput" class="upload-box" id="uploadBox">
+      <span id="uploadLabel">📷 食材画面のスクリーンショットをアップロード（複数枚可）</span>
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
+    </label>
+    <p class="hint">
+      食材が1枚に収まらずスクロールが必要な場合は、複数枚のスクリーンショットをまとめて（または追加で）アップロードしてください。
+      同じ食材が別の画像にも写っていた場合は自動的に統合し、読み取った数値が食い違った場合はエラーとして表示します。
+    </p>
+    <div id="previewList" class="preview-list"></div>
+    <div id="ocrStatus" class="ocr-status" hidden></div>
+    <button id="resetBtn" type="button" class="reset-btn" hidden>読み取り結果をリセット</button>
+  </section>
+
+  <section id="conflictSection" class="conflict-section" hidden>
+    <div class="section-head">
+      <h2>⚠️ 数値が競合している食材</h2>
+    </div>
+    <p class="hint">同じ食材について、画像ごとに違う数値が読み取られました。該当のスクリーンショットを確認し、鮮明な画像で撮り直してください。</p>
+    <div id="conflictList" class="conflict-list"></div>
+  </section>
+
+  <section class="ingredients-section">
+    <div class="section-head">
+      <h2>画像から読み取った食材数</h2>
+    </div>
+    <p class="hint">
+      画像内の食材名と数字をOCRで自動認識します。読み取れなかった食材は0として扱われるため、
+      結果が期待と違う場合はスクリーンショットの明るさ・解像度を上げて撮り直してください。
+    </p>
+    <div id="detectedList" class="detected-list"></div>
+  </section>
+
+  <section class="result-section">
+    <div class="section-head">
+      <h2>作れる料理</h2>
+      <div class="section-actions">
+        <label><input type="checkbox" id="showAlmost"> あと少しで作れる料理も表示</label>
+      </div>
+    </div>
+    <div id="resultList" class="result-list"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="data.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

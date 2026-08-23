@@ -1,0 +1,269 @@
+:root {
+  --bg: #fff8ef;
+  --card: #ffffff;
+  --accent: #ff9f43;
+  --accent-dark: #e07b1f;
+  --text: #3d2b1f;
+  --muted: #8a7a6d;
+  --border: #f0e0cc;
+  --ok: #4caf50;
+  --almost: #ffb020;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font-family: "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  text-align: center;
+  padding: 24px 16px 8px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 1.6rem;
+}
+
+header .sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+section {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.upload-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--accent-dark);
+  font-weight: bold;
+  text-align: center;
+  padding: 16px;
+  transition: background 0.15s;
+}
+
+.upload-box:hover {
+  background: #fff3e0;
+}
+
+.preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.preview-list img {
+  max-width: 140px;
+  max-height: 140px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
+
+.ocr-status {
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.reset-btn {
+  display: block;
+  margin: 12px auto 0;
+  background: #eee;
+  color: var(--text);
+  border: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.reset-btn:hover {
+  background: #ddd;
+}
+
+.conflict-section {
+  border: 2px solid #e74c3c;
+  background: #fff5f5;
+}
+
+.conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conflict-item {
+  font-size: 0.9rem;
+  color: #c0392b;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.section-actions button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.section-actions button:hover {
+  background: var(--accent-dark);
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 8px 0 12px;
+}
+
+.detected-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.detected-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  background: #fafafa;
+}
+
+.detected-card.found {
+  background: #f2fbf2;
+  border-color: var(--ok);
+}
+
+.detected-card.conflict {
+  background: #fff5f5;
+  border-color: #e74c3c;
+}
+
+.detected-card.conflict .count {
+  color: #e74c3c;
+}
+
+.detected-card .name {
+  font-size: 0.75rem;
+  text-align: center;
+  min-height: 2.2em;
+}
+
+.detected-card .count {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: var(--accent-dark);
+}
+
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipe-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recipe-card.ok {
+  border-color: var(--ok);
+  background: #f2fbf2;
+}
+
+.recipe-card.almost {
+  border-color: var(--almost);
+  background: #fffaf0;
+}
+
+.recipe-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.recipe-head .rname {
+  font-weight: bold;
+}
+
+.recipe-head .rcat {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.recipe-ings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.ing-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0f0f0;
+}
+
+.ing-tag.short {
+  background: #ffe3e3;
+  color: #c0392b;
+}
+
+.empty-msg {
+  color: var(--muted);
+  text-align: center;
+  padding: 24px;
+}
