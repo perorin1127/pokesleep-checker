@@ -1,0 +1,8 @@
+{
+  "name": "pokesleep-checker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "update-recipes": "node scripts/update-recipes.mjs"
+  }
+}

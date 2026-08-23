@@ -1,0 +1,35 @@
+name: Update recipe data
+
+on:
+  schedule:
+    # 毎週月曜 3:00 UTC（日本時間 正午ごろ）に実行
+    - cron: "0 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run scraper
+        run: node scripts/update-recipes.mjs
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- data.js; then
+            echo "No changes to data.js"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.js
+          git commit -m "Auto-update recipe data from Game8"
+          git push
