@@ -9,6 +9,7 @@ const conflictList = document.getElementById("conflictList");
 const detectedList = document.getElementById("detectedList");
 const resultList = document.getElementById("resultList");
 const showAlmost = document.getElementById("showAlmost");
+const categoryFilter = document.getElementById("categoryFilter");
 
 // 食材名 -> [{ qty, imageLabel }] 画像ごとに読み取れた値を蓄積する
 const detectedSources = {};
@@ -21,12 +22,16 @@ INGREDIENTS.forEach(ing => (counts[ing.name] = 0));
 // 競合中の食材名 -> Set(数値)
 let conflicts = {};
 
+// ユーザーが手入力で上書きした食材名 -> 数値（自動読み取りより優先される）
+const manualOverrides = {};
+
 let imageCounter = 0;
 
 showAlmost.addEventListener("change", renderResults);
 
 resetBtn.addEventListener("click", () => {
   INGREDIENTS.forEach(ing => (detectedSources[ing.name] = []));
+  Object.keys(manualOverrides).forEach(k => delete manualOverrides[k]);
   imageCounter = 0;
   previewList.innerHTML = "";
   resetBtn.hidden = true;
@@ -48,9 +53,18 @@ function buildDetectedList() {
     name.className = "name";
     name.textContent = ing.name;
 
-    const count = document.createElement("div");
+    const count = document.createElement("input");
+    count.type = "number";
+    count.min = "0";
     count.className = "count";
-    count.textContent = counts[ing.name];
+    count.value = counts[ing.name];
+    count.addEventListener("change", () => {
+      const v = parseInt(count.value, 10);
+      manualOverrides[ing.name] = isNaN(v) || v < 0 ? 0 : v;
+      recomputeCounts();
+      refreshDetectedList();
+      renderResults();
+    });
 
     card.appendChild(name);
     card.appendChild(count);
@@ -64,17 +78,27 @@ function refreshDetectedList() {
     const card = detectedList.querySelector(`.detected-card[data-name="${CSS.escape(ing.name)}"]`);
     if (!card) return;
     const isConflict = !!conflicts[ing.name];
+    const isManual = Object.prototype.hasOwnProperty.call(manualOverrides, ing.name);
     const c = counts[ing.name] || 0;
-    card.querySelector(".count").textContent = isConflict ? "?" : c;
-    card.classList.toggle("found", !isConflict && c > 0);
+    const input = card.querySelector(".count");
+    if (document.activeElement !== input) {
+      input.value = isConflict ? "" : c;
+    }
+    input.placeholder = isConflict ? "?" : "";
+    card.classList.toggle("found", !isConflict && c > 0 && !isManual);
     card.classList.toggle("conflict", isConflict);
+    card.classList.toggle("manual", isManual);
   });
 }
 
-// detectedSources から counts / conflicts を再計算する
+// detectedSources から counts / conflicts を再計算する（手入力があればそちらを優先）
 function recomputeCounts() {
   conflicts = {};
   INGREDIENTS.forEach(ing => {
+    if (Object.prototype.hasOwnProperty.call(manualOverrides, ing.name)) {
+      counts[ing.name] = manualOverrides[ing.name];
+      return;
+    }
     const sources = detectedSources[ing.name];
     if (!sources || sources.length === 0) {
       counts[ing.name] = 0;
@@ -111,10 +135,32 @@ function renderConflicts() {
   });
 }
 
+// カテゴリ一覧（RECIPES に登場する順で重複なく抽出）
+const CATEGORIES = [...new Set(RECIPES.map(r => r.category))];
+const selectedCategories = new Set(CATEGORIES);
+
+function buildCategoryFilter() {
+  categoryFilter.innerHTML = "";
+  CATEGORIES.forEach(cat => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedCategories.add(cat);
+      else selectedCategories.delete(cat);
+      renderResults();
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + cat));
+    categoryFilter.appendChild(label);
+  });
+}
+
 function renderResults() {
   resultList.innerHTML = "";
 
-  const evaluated = RECIPES.map(recipe => {
+  const evaluated = RECIPES.filter(r => selectedCategories.has(r.category)).map(recipe => {
     const need = Object.entries(recipe.ingredients);
     let shortItems = [];
     let missingTotal = 0;
@@ -506,4 +552,5 @@ uploadBox.addEventListener("drop", e => {
 });
 
 buildDetectedList();
+buildCategoryFilter();
 renderResults();

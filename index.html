@@ -40,8 +40,8 @@
       <h2>画像から読み取った食材数</h2>
     </div>
     <p class="hint">
-      画像内の食材名と数字をOCRで自動認識します。読み取れなかった食材は0として扱われるため、
-      結果が期待と違う場合はスクリーンショットの明るさ・解像度を上げて撮り直してください。
+      画像内のアイコンと数字を自動認識します。読み取れなかった食材は0のままになるので、
+      数字をタップすれば手入力・修正できます（画像の再読み込みで手入力値は上書きされます）。
     </p>
     <div id="detectedList" class="detected-list"></div>
   </section>
@@ -53,6 +53,7 @@
         <label><input type="checkbox" id="showAlmost"> あと少しで作れる料理も表示</label>
       </div>
     </div>
+    <div class="category-filter" id="categoryFilter"></div>
     <div id="resultList" class="result-list"></div>
   </section>
 </main>
